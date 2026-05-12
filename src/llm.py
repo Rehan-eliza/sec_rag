@@ -13,6 +13,7 @@ Supports both:
 
 from __future__ import annotations
 
+import json
 from typing import Generator
 
 import requests
@@ -116,7 +117,6 @@ def stream_ollama(prompt: str) -> Generator[str, None, None]:
             timeout=120,
         ) as resp:
             resp.raise_for_status()
-            import json
             for line in resp.iter_lines():
                 if line:
                     chunk = json.loads(line)
@@ -131,3 +131,7 @@ def stream_ollama(prompt: str) -> Generator[str, None, None]:
             f"Cannot connect to Ollama at {OLLAMA_HOST}. "
             "Make sure Ollama is running: `ollama serve`"
         )
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Ollama request timed out after 120 s.")
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(f"Ollama API error: {e}")

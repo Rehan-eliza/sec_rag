@@ -32,7 +32,7 @@ from config import (
 )
 from src.indexer import build_index, get_embedding_model, index_exists, load_index
 from src.ingest import load_all_filings, load_filing_text
-from src.llm import call_ollama, model_is_available, ollama_is_available
+from src.llm import model_is_available, ollama_is_available, stream_ollama
 from src.prompt import build_citation_map, build_prompt
 from src.retriever import retrieve
 
@@ -400,16 +400,16 @@ if submitted:
     citation_map = build_citation_map(qualified)
 
     # -----------------------------------------------------------------------
-    # LLM call
+    # LLM call (stream tokens so the UI updates as the model generates)
     # -----------------------------------------------------------------------
-    with st.spinner(f"Asking {OLLAMA_MODEL}…"):
-        t1 = time.time()
-        try:
-            raw_answer = call_ollama(prompt)
-        except RuntimeError as e:
-            st.error(str(e))
-            st.stop()
-        llm_time = time.time() - t1
+    t1 = time.time()
+    try:
+        streamed = st.write_stream(stream_ollama(prompt))
+    except RuntimeError as e:
+        st.error(str(e))
+        st.stop()
+    llm_time = time.time() - t1
+    raw_answer = (streamed or "").strip()
 
     # -----------------------------------------------------------------------
     # Store in history
@@ -424,6 +424,7 @@ if submitted:
         "rrf_counts":   rrf_counts,
     }
     st.session_state.query_history.insert(0, result)
+    st.rerun()
 
 # ---------------------------------------------------------------------------
 # Render results  (most-recent first)

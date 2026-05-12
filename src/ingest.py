@@ -75,8 +75,10 @@ _KEEP_FIELDS = {
 # ---------------------------------------------------------------------------
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase, strip punctuation, remove stopwords."""
-    text = text.lower().translate(str.maketrans("", "", string.punctuation))
+    """Lowercase, strip English possessive ('s), other punctuation, then stopwords."""
+    text = text.lower().replace("\u2019", "'")
+    text = re.sub(r"(?<=[a-z0-9])'s\b", "", text)
+    text = text.translate(str.maketrans("", "", string.punctuation))
     return [w for w in text.split() if w and w not in _STOPWORDS]
 
 

@@ -37,6 +37,8 @@ from config import (
     HF_TOKEN,
 )
 
+from src.ingest import tokenize
+
 # ---------------------------------------------------------------------------
 # Hugging Face token
 # ---------------------------------------------------------------------------
@@ -87,8 +89,8 @@ def get_embedding_model() -> HuggingFaceEmbeddings:
 
 def build_entity_map(docs: list[Document]) -> dict[str, dict]:
     """
-    Build a lowercase lookup dict from every unique ticker and company name
-    found in the corpus.
+    Build a lowercase lookup dict from every unique ticker, full company name,
+    and content words of company names (NLTK stopwords removed — same as BM25).
 
     Example output:
         {
@@ -118,10 +120,10 @@ def build_entity_map(docs: list[Document]) -> dict[str, dict]:
         if company:
             entity_map[company.lower()] = entry
 
-        # Index by first word of company name (e.g. "tesla")
+        # Index by each content word of company name (same tokenisation as BM25)
         if company:
-            first_word = company.lower().split()[0].rstrip(",.")
-            entity_map[first_word] = entry
+            for w in tokenize(company):
+                entity_map[w] = entry
 
     return entity_map
 

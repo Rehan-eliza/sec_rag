@@ -27,7 +27,6 @@ at ingest time (same tokenise function, guaranteed consistency).
 from __future__ import annotations
 
 import re
-import string
 from typing import NamedTuple
 
 import numpy as np
@@ -96,8 +95,7 @@ def parse_query_filters(query: str, entity_map: dict) -> dict:
     All keys are optional — only present when evidence is found.
     """
     filters: dict = {}
-    lower = query.lower()
-    words = lower.translate(str.maketrans("", "", string.punctuation)).split()
+    words = tokenize(query)
     bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words) - 1)]
 
     # --- Company / ticker detection ---
