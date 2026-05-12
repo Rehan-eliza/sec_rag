@@ -17,7 +17,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import streamlit as st
 
 # Ensure project root is on path
@@ -157,6 +156,8 @@ if "query_history" not in st.session_state:
     st.session_state.query_history = []
 if "extra_docs" not in st.session_state:
     st.session_state.extra_docs = []   # docs from uploaded files (session only)
+if "query_input" not in st.session_state:
+    st.session_state.query_input = ""
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +184,7 @@ def ensure_index_loaded():
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.title("📋 SEC RAG")
+    st.title("SEC RAG")
     st.caption("Retrieval-augmented analysis of SEC filings")
     st.divider()
 
@@ -285,22 +286,24 @@ st.caption(
     "Every claim in the answer is grounded in a specific filing."
 )
 
-# Example questions
+# Example questions (write into query_input so Analyze rerun keeps the text)
 with st.expander("Example questions"):
     examples = [
         "What are the primary risk factors facing Apple, Tesla, and JPMorgan, and how do they compare?",
         "How has NVIDIA's revenue and growth outlook changed over the last two years?",
         "What regulatory risks do the major pharmaceutical companies face, and how are they addressing them?",
     ]
-    for ex in examples:
-        if st.button(ex, key=ex, use_container_width=True):
-            st.session_state["prefill_query"] = ex
+    for i, ex in enumerate(examples):
+        if st.button(ex, key=f"example_btn_{i}", use_container_width=True):
+            st.session_state.query_input = ex
 
-# Query input
-default_query = st.session_state.pop("prefill_query", "")
+if "prefill_query" in st.session_state:
+    st.session_state.query_input = st.session_state.pop("prefill_query")
+
+# Query input — key binds widget to session_state so value survives Analyze reruns
 query = st.text_area(
     "Your question",
-    value=default_query,
+    key="query_input",
     height=90,
     placeholder="e.g. What are the primary risk factors facing Apple and Tesla?",
     label_visibility="collapsed",
@@ -308,7 +311,7 @@ query = st.text_area(
 
 col1, col2 = st.columns([1, 5])
 with col1:
-    submitted = st.button("Analyse", type="primary", use_container_width=True)
+    submitted = st.button("Analyze", type="primary", use_container_width=True)
 with col2:
     if st.session_state.query_history:
         if st.button("Clear history", use_container_width=False):

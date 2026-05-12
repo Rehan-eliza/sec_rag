@@ -36,6 +36,7 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from rank_bm25 import BM25Okapi
 
 from config import (
     BM25_WEIGHT,
@@ -218,15 +219,13 @@ def retrieve(
             stored = doc.metadata.get("bm25_tokens")
             return stored if stored else tokenize(doc.page_content)
 
-        bm25_retriever = BM25Retriever.from_documents(
-            filtered_docs,
-            preprocess_func=tokenize,   # applied to the query
+        corpus_tokens = [_get_tokens(d) for d in filtered_docs]
+        bm25_retriever = BM25Retriever(
+            vectorizer=BM25Okapi(corpus_tokens),
+            docs=list(filtered_docs),
+            preprocess_func=tokenize,
             k=TOP_K,
         )
-        # Override internal corpus tokenisation with pre-computed tokens
-        bm25_retriever.docs = filtered_docs
-        bm25_retriever.vectorizer.corpus = [_get_tokens(d) for d in filtered_docs]
-        bm25_retriever.vectorizer.fit(bm25_retriever.vectorizer.corpus)
 
         retrievers.append(bm25_retriever)
         weights.append(BM25_WEIGHT)

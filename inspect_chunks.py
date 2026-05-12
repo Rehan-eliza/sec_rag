@@ -77,7 +77,7 @@ def get_docs(rebuild: bool = False):
 # Analysis
 # ---------------------------------------------------------------------------
 
-def analyse(docs) -> np.ndarray:
+def analyze(docs) -> np.ndarray:
     """Extract word counts from all chunks."""
     counts = []
     for doc in docs:
@@ -214,7 +214,7 @@ def main():
     args = parser.parse_args()
 
     docs   = get_docs(rebuild=args.rebuild)
-    counts = analyse(docs)
+    counts = analyze(docs)
 
     print_report(counts)
 

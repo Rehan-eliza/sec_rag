@@ -1,4 +1,10 @@
 from pathlib import Path
+import os
+
+from dotenv import load_dotenv
+
+# Load .env from the project root — must happen before any os.getenv calls
+load_dotenv(Path(__file__).parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -13,43 +19,59 @@ for _d in [DATA_DIR, INDEX_DIR, LOGS_DIR, PROMPTS_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Embedding model  (local — no API key required)
+# Hugging Face token
+# Set HF_TOKEN in your .env file — never put it in this file directly.
+# .env is listed in .gitignore and will not be committed to source control.
+# ---------------------------------------------------------------------------
+HF_TOKEN: str = os.getenv("HF_TOKEN", "")
+
+# ---------------------------------------------------------------------------
+# Embedding model  (local — no external API calls)
 # ---------------------------------------------------------------------------
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+# Batch size for encoding at index build time.
+EMBEDDING_BATCH_SIZE = 1024
+
 # ---------------------------------------------------------------------------
 # Chunking
+#
+# The chunker uses a SLIDING WINDOW over sentences, not one-sentence-per-chunk.
+# SENTENCES_PER_CHUNK controls how many sentences are grouped into one chunk.
+# SENTENCE_OVERLAP controls how many sentences are shared between adjacent
+# chunks (provides context continuity across chunk boundaries).
+#
+# Example with SENTENCES_PER_CHUNK=3, SENTENCE_OVERLAP=1:
+#   Chunk 1: sentences 1, 2, 3
+#   Chunk 2: sentences 3, 4, 5   <- sentence 3 repeated for continuity
+#   Chunk 3: sentences 5, 6, 7
+#
+# Set SENTENCES_PER_CHUNK=1 and SENTENCE_OVERLAP=0 for true single-sentence
+# chunking.
 # ---------------------------------------------------------------------------
-SENTENCES_PER_CHUNK = 6   # sentences grouped into one chunk
-SENTENCE_OVERLAP    = 2   # sentences shared between adjacent chunks
+SENTENCES_PER_CHUNK = 6   # sentences grouped into one chunk window
+SENTENCE_OVERLAP    = 2   # sentences shared between adjacent windows
 
 # ---------------------------------------------------------------------------
 # Chunk quality filter
 # ---------------------------------------------------------------------------
-# Minimum word count a chunk must have to be kept.
-# Chunks below this threshold are dropped during ingestion as noise.
-# Set to 0 to disable.
-MIN_CHUNK_WORDS = 5
-
-# Enable/disable the minimum-word-count filter entirely.
-ENABLE_MIN_WORD_FILTER = True
+MIN_CHUNK_WORDS        = 5     # drop chunks below this word count
+ENABLE_MIN_WORD_FILTER = True  # set False to disable the filter entirely
 
 # ---------------------------------------------------------------------------
 # Retrieval feature flags
-# Each retriever leg can be independently disabled for ablation / debugging.
-# At least one of ENABLE_BM25 / ENABLE_SEMANTIC must be True.
 # ---------------------------------------------------------------------------
-ENABLE_BM25               = True   # BM25 keyword retrieval leg
-ENABLE_SEMANTIC           = True   # FAISS semantic retrieval leg
-ENABLE_METADATA_FILTERING = True   # pre-filter chunks by query-detected metadata
+ENABLE_BM25               = True
+ENABLE_SEMANTIC           = True
+ENABLE_METADATA_FILTERING = True
 
 # ---------------------------------------------------------------------------
 # Retrieval hyperparameters
 # ---------------------------------------------------------------------------
-TOP_K                = 10    # candidates fetched by each retriever leg
-SIMILARITY_THRESHOLD = 0.90  # cosine similarity floor; below this → no answer
-BM25_WEIGHT          = 0.4   # EnsembleRetriever weight for BM25 leg
-FAISS_WEIGHT         = 0.6   # EnsembleRetriever weight for FAISS leg
+TOP_K                = 10
+SIMILARITY_THRESHOLD = 0.50
+BM25_WEIGHT          = 0.5
+FAISS_WEIGHT         = 0.5
 
 # ---------------------------------------------------------------------------
 # LLM  (Ollama, local)
@@ -60,7 +82,7 @@ OLLAMA_TEMPERATURE = 0.1
 OLLAMA_NUM_PREDICT = 2048
 
 # ---------------------------------------------------------------------------
-# Index artefact filenames  (all live inside INDEX_DIR)
+# Index artefact filenames
 # ---------------------------------------------------------------------------
 FAISS_INDEX_DIR = INDEX_DIR / "faiss_store"
 EMBEDDINGS_FILE = INDEX_DIR / "embeddings.npy"

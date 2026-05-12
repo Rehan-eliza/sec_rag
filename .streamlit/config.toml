@@ -1,0 +1,5 @@
+# Stop Streamlit from walking site-packages (e.g. transformers). Otherwise the
+# file watcher triggers lazy imports that need torchvision and logs hundreds of
+# "Examining the path … raised: ModuleNotFoundError: No module named 'torchvision'".
+[server]
+fileWatcherType = "none"

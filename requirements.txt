@@ -1,16 +1,23 @@
 # SEC RAG — Python dependencies
-# Install with:  pip install -r requirements.txt
+# To install for GPU: 
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# pip install -r requirements.txt
 
-# LangChain ecosystem
-langchain>=0.2.0
-langchain-community>=0.2.0
-langchain-core>=0.2.0
+# LangChain — pinned to stable pre-split version
+langchain==0.1.20
+langchain-community==0.0.38
+langchain-core==0.1.52
 
 # Vector store
 faiss-cpu>=1.7.4
 
 # Embeddings (local, no API key)
 sentence-transformers>=2.7.0
+torch>=2.2.0
+# Pulled in by many transformers submodules when tools import-introspect the package.
+# Install the CUDA wheel from the PyTorch index alongside torch if you use GPU.
+torchvision>=0.17.0
+tf-keras==2.16.0
 
 # BM25
 rank-bm25>=0.2.2
@@ -21,11 +28,16 @@ nltk>=3.8.1
 # Ollama HTTP client
 requests>=2.31.0
 
+# Environment variable loading
+python-dotenv>=1.0.0
+
 # Numerics
 numpy>=1.26.0
 
 # Front-end
-streamlit>=1.35.0
+# Pin below 1.57: 1.57 defaults to Starlette (replaces Tornado); some Windows setups
+# see the CLI return to the shell with exit code 0 right after the first script run.
+streamlit>=1.56.0,<1.57
 
 # Visualisation (optional — only needed for inspect_chunks.py)
 matplotlib>=3.8.0

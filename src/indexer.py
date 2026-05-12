@@ -15,10 +15,13 @@ Run once before launching the app:
 from __future__ import annotations
 
 import json
+import os
 import pickle
 from pathlib import Path
 
 import numpy as np
+import torch
+from sentence_transformers import SentenceTransformer
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -30,23 +33,50 @@ from config import (
     ENTITY_MAP_FILE,
     FAISS_INDEX_DIR,
     EMBEDDING_MODEL,
+    EMBEDDING_BATCH_SIZE,
+    HF_TOKEN,
 )
 
+# ---------------------------------------------------------------------------
+# Hugging Face token
+# ---------------------------------------------------------------------------
+if HF_TOKEN:
+    os.environ["HF_TOKEN"]               = HF_TOKEN
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
 # ---------------------------------------------------------------------------
-# Embedding model  (singleton — loaded once per process)
+# Device detection — use GPU if available, fall back to CPU
 # ---------------------------------------------------------------------------
+_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+
+# ---------------------------------------------------------------------------
+# SentenceTransformer — used directly for fast batched encoding at index time
+# ---------------------------------------------------------------------------
+_st_model: SentenceTransformer | None = None
+
+def get_st_model() -> SentenceTransformer:
+    """Raw SentenceTransformer model for bulk encoding with batch size control."""
+    global _st_model
+    if _st_model is None:
+        print(f"[indexer] Loading embedding model on {_DEVICE.upper()}: {EMBEDDING_MODEL}")
+        _st_model = SentenceTransformer(EMBEDDING_MODEL, device=_DEVICE)
+    return _st_model
+
+
+# ---------------------------------------------------------------------------
+# HuggingFaceEmbeddings — LangChain wrapper used by FAISS retriever at query time
+# ---------------------------------------------------------------------------
 _embeddings_model: HuggingFaceEmbeddings | None = None
 
-
 def get_embedding_model() -> HuggingFaceEmbeddings:
+    """LangChain-compatible embedding model for FAISS retriever."""
     global _embeddings_model
     if _embeddings_model is None:
-        print(f"[indexer] Loading embedding model: {EMBEDDING_MODEL}")
         _embeddings_model = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL,
-            encode_kwargs={"normalize_embeddings": True},  # dot product == cosine sim
+            model_kwargs={"device": _DEVICE},
+            encode_kwargs={"normalize_embeddings": True},
         )
     return _embeddings_model
 
@@ -103,26 +133,44 @@ def build_entity_map(docs: list[Document]) -> dict[str, dict]:
 def build_index(docs: list[Document]) -> None:
     """
     Embed all documents, build FAISS store, and persist all artefacts to disk.
+
+    Uses SentenceTransformer.encode() directly for bulk embedding so we can
+    control batch size and use GPU if available — much faster than calling
+    HuggingFaceEmbeddings.embed_documents() which has no batch size control.
+    Embeddings are computed once and reused for both FAISS and the cosine
+    similarity lookup array.
     """
     if not docs:
         raise ValueError("[indexer] No documents provided — cannot build index.")
 
-    model = get_embedding_model()
+    st_model   = get_st_model()
+    lc_model   = get_embedding_model()   # LangChain wrapper for FAISS interface
+    texts      = [d.page_content for d in docs]
 
-    print(f"[indexer] Embedding {len(docs)} chunks …")
-    texts = [d.page_content for d in docs]
+    print(f"[indexer] Embedding {len(docs)} chunks "
+          f"(batch_size={EMBEDDING_BATCH_SIZE}, device={_DEVICE.upper()}) …")
 
-    # Raw embeddings (normalised — for cosine similarity via dot product)
-    raw_embeddings: list[list[float]] = model.embed_documents(texts)
-    embeddings_array = np.array(raw_embeddings, dtype=np.float32)
+    # Embed entire corpus in one batched call — normalised for cosine similarity
+    embeddings_array: np.ndarray = st_model.encode(
+        texts,
+        batch_size=EMBEDDING_BATCH_SIZE,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    ).astype(np.float32)
 
-    # FAISS vector store via LangChain
+    # Build FAISS store from pre-computed embeddings — no re-embedding
     print("[indexer] Building FAISS index …")
-    faiss_store = FAISS.from_documents(docs, model)
+    text_embedding_pairs = list(zip(texts, embeddings_array.tolist()))
+    faiss_store = FAISS.from_embeddings(
+        text_embeddings=text_embedding_pairs,
+        embedding=lc_model,
+        metadatas=[d.metadata for d in docs],
+    )
     faiss_store.save_local(str(FAISS_INDEX_DIR))
     print(f"[indexer] FAISS saved → {FAISS_INDEX_DIR}")
 
-    # Embeddings array + doc_ids (parallel arrays for O(1) lookup)
+    # Persist embeddings array + doc_ids for cosine similarity lookup
     doc_ids = [d.metadata["doc_id"] for d in docs]
     np.save(str(EMBEDDINGS_FILE), embeddings_array)
     DOC_IDS_FILE.write_text(json.dumps(doc_ids, indent=2))
