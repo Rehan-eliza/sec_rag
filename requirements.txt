@@ -1,0 +1,31 @@
+# SEC RAG — Python dependencies
+# Install with:  pip install -r requirements.txt
+
+# LangChain ecosystem
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+
+# Vector store
+faiss-cpu>=1.7.4
+
+# Embeddings (local, no API key)
+sentence-transformers>=2.7.0
+
+# BM25
+rank-bm25>=0.2.2
+
+# NLP / tokenisation
+nltk>=3.8.1
+
+# Ollama HTTP client
+requests>=2.31.0
+
+# Numerics
+numpy>=1.26.0
+
+# Front-end
+streamlit>=1.35.0
+
+# Visualisation (optional — only needed for inspect_chunks.py)
+matplotlib>=3.8.0
