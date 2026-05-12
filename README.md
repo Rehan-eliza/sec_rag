@@ -16,14 +16,15 @@ with every claim traced to a specific filing excerpt.
 
 Query
     → entity detector (dict lookup → ticker/company)
-    → year/filing-type regex
-    → metadata pre-filter narrows chunk pool
-    → BM25 top-10  +  FAISS top-10  (run in parallel)
-    → EnsembleRetriever (LangChain RRF fusion) → merged top-10
-    → cosine similarity threshold (≥ 90%)
-    → if no chunks qualify → warning, no answer
-    → prompt assembly → single Ollama call (gemma4:e4b)
-    → Streamlit UI with inline citations + similarity scores
+    → year + filing-type hints (regex + keywords)
+    → metadata pre-filter narrows chunk pool (optional)
+    → BM25 top-K  +  FAISS top-K  (both legs when enabled; run in parallel)
+    → cosine floor on FAISS candidates only (BM25 leg is top-K, no cosine gate)
+    → weighted reciprocal-rank fusion of the two leg lists (LangChain helper)
+    → fused list cosine-scored for citation ordering in the UI
+    → if nothing survives filters / semantic-only gate → warning, no answer
+    → prompt assembly → single Ollama call (default: gemma4:e4b)
+    → Streamlit UI: streamed answer, inline citations + similarity scores
 ```
 
 ---
@@ -121,8 +122,8 @@ This prints a percentile table to the console and saves a chart to
 | `ENABLE_METADATA_FILTERING` | `True` | Toggle metadata pre-filtering |
 | `TOP_K` | `10` | Candidates per retriever leg |
 | `SIMILARITY_THRESHOLD` | `0.90` | Cosine similarity floor |
-| `BM25_WEIGHT` | `0.4` | RRF weight for BM25 leg |
-| `FAISS_WEIGHT` | `0.6` | RRF weight for FAISS leg |
+| `BM25_WEIGHT` | `0.5` | RRF weight for BM25 leg |
+| `FAISS_WEIGHT` | `0.5` | RRF weight for FAISS leg |
 | `OLLAMA_MODEL` | `gemma4:e4b` | Model served by Ollama |
 | `OLLAMA_TEMPERATURE` | `0.1` | LLM temperature |
 
@@ -141,8 +142,7 @@ sec-rag/
 │   └── filings/            # Place .txt filing files here
 ├── index/                  # Auto-generated index artefacts
 ├── logs/                   # inspect_chunks.py output
-├── prompts/
-│   └── prompt_log.md       # Prompt iteration history
+├── prompts/                # Created at runtime (optional notes / prompt history)
 └── src/
     ├── ingest.py            # Header parsing + sentence chunking
     ├── indexer.py           # FAISS build/load + entity map
@@ -168,13 +168,14 @@ What regulatory risks do the major pharmaceutical companies face, and how are th
 - **Single LLM call constraint** — all retrieval, filtering, and prompt assembly
   happens in Python. The model receives one fully-assembled prompt and produces
   one response.
-- **Local-only** — no external API calls. Embeddings via `sentence-transformers`,
-  LLM via Ollama, BM25 via `rank-bm25`.
+- **No cloud LLM API** — answers come from a local Ollama model; embeddings use
+  `sentence-transformers` (first model download may hit Hugging Face; optional
+  `HF_TOKEN` in `.env` for gated models). BM25 via `rank-bm25`.
 - **Metadata filtering before retrieval** — narrows the chunk pool before BM25
   and FAISS run, improving both precision and speed.
-- **90% cosine similarity threshold** — conservative by design. If the corpus
-  does not contain relevant information the system says so rather than
-  hallucinating.
+- **90% cosine floor on the semantic leg** — FAISS candidates below the
+  threshold are dropped before fusion; BM25 hits are not cosine-filtered. When
+  semantic-only mode filters everything, the UI warns instead of answering.
 - **Pre-computed `bm25_tokens`** — stored on each chunk at ingest time so the
   BM25 tokenisation is guaranteed consistent between index and query time.
 - **`word_count` metadata field** — stored per chunk to enable the distribution
@@ -190,5 +191,27 @@ What regulatory risks do the major pharmaceutical companies face, and how are th
   sources indicate the corpus doesn't cover the question well.
 - Toggle `ENABLE_BM25` / `ENABLE_SEMANTIC` off independently to observe
   the contribution of each retrieval leg.
-- Review `prompts/prompt_log.md` for the reasoning behind the current
-  prompt template.
+- Read the header comments in `src/prompt.py` for template versioning; keep
+  optional notes under `prompts/` if you maintain a separate prompt log.
+
+---
+
+## To do
+
+- **Ingest / metadata** — Support PDFs and layout-aware extractors (e.g. Azure Document Intelligence) so chunk metadata is richer and retrieval can filter and match more precisely.
+- **Retrieval** — Rerank to a smaller top‑K per leg before RRF; apply **MMR** (maximal marginal relevance) after reranking and before fusion so legs contribute less redundant overlap.
+- **Embeddings / index** — Swap or add a domain-specific financial embedding model so the semantic (FAISS) leg matches filing language better.
+- **Chunking** — Experiment with parent–child chunks, light graph structure across related passages, or an improved sliding window to reduce boundary loss.
+- **Generation** — Offer a frontier-class model option for higher-quality synthesis when extraction from sources is subtle or dense.
+- **Infra** — Scale CPU/GPU so index build and embedding passes finish faster on large corpora.
+- **Storage / retrieval** — Move off pure in-memory FAISS to something like Postgres or MongoDB (with cold storage tiers) for reuse across runs; enable heavier pre-filtering (e.g. k-means on chunk embeddings) before full vector search.
+- **Feedback loop** — Persist user ratings, final answers, and the chunks supplied; optionally short-circuit new queries that closely match highly rated past Q&A pairs and reuse the validated answer instead of re-running the full pipeline.
+- **Query prep** — Query rewriting and/or **HyDE** (hypothetical document embeddings) so short or vague questions become retrieval-friendly text before the semantic leg runs.
+- **Query routing** — Classify each query with rules or a small model (fact lookup, comparison, risk narrative, …) and branch retrieval: e.g. stricter metadata filters for single-ticker facts, higher `TOP_K` or per-ticker retrieval for comparisons, broader recall when answers span long qualitative sections—instead of one fixed setting for every question.
+- **Multi-agent orchestration** — Add a **master agent** that inspects each query and routes work to **sub-agents** (e.g. dedicated retrieval, table/numbers, cross-filing comparison, final answer synthesis) so complex questions run targeted tools and prompts instead of one monolithic pipeline path.
+- **Retrieval (calibration)** — Learn RRF leg weights and similarity thresholds from labeled `(query, relevant chunk IDs)` pairs instead of fixed constants.
+- **Section tags** — Tag chunks with filing sections (MD&A, Risk Factors, Notes to financial statements, etc.) from layout or headings so filters and boosting match where answers usually live.
+- **Tables / chunking** — Preserve table rows and layout-adjacent structure so numeric questions retain columns and headers in context.
+- **Generation / consistency** — Use chain-of-thought where it helps break down complex questions; add consistency checks on model output (e.g. **UQLM** or similar packages) before surfacing answers.
+- **Evaluation** — Build a curated labeled set to tune chunking, retrieval, fusion, and prompts with measurable regressions.
+- **CI/CD & prompts** — Automate pipeline checks against that eval set; integrate user feedback into dynamic prompt variants; adopt a small agent only if it clearly improves orchestration over static prompts.
