@@ -83,7 +83,7 @@ OLLAMA_TEMPERATURE = 0.1
 OLLAMA_NUM_PREDICT = 2048
 
 # ---------------------------------------------------------------------------
-# Index artefact filenames
+# Index artifact filenames
 # ---------------------------------------------------------------------------
 FAISS_INDEX_DIR = INDEX_DIR / "faiss_store"
 EMBEDDINGS_FILE = INDEX_DIR / "embeddings.npy"

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SEC RAG — pipeline architecture</title>
+  <style>
+    :root {
+      --bg: #faf9f6;
+      --text: #2c2c2a;
+      --muted: #5f5e5a;
+      --border: #e0ded6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 20px 48px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 650;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .lede {
+      color: var(--muted);
+      margin: 0 0 20px;
+      max-width: 72ch;
+    }
+    .diagram {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 12px 28px;
+      overflow-x: auto;
+    }
+    .diagram .mermaid { text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>SEC RAG — pipeline architecture</h1>
+    <p class="lede">
+      Four stages: <strong>Ingest → Index → Retrieve → Answer</strong>.
+    </p>
+
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TB
+    subgraph ingest["Ingest"]
+        direction LR
+        F["SEC filings<br/>plain text with a short header"]
+        H["Header parsing<br/>company, ticker, dates, form type"]
+        C["Sentence chunking<br/>sliding windows with overlap<br/>chunk length · terms prepared for BM25"]
+        F --> H --> C
+    end
+
+    subgraph index["Index"]
+        direction LR
+        E["Embedder<br/>sentence-transformers<br/>all-MiniLM-L6-v2"]
+        VS["Vector index<br/>FAISS · saved to disk"]
+        B["Keyword index<br/>BM25 · same text prep as ingest"]
+        D["Saved chunk bundle<br/>text, metadata, vectors, company lookup"]
+        E --> VS --> D
+        C -.->|text for embeddings| E
+        C -.->|chunks for BM25| B
+        B --> D
+    end
+
+    subgraph retrieve["Retrieve"]
+        direction TB
+        Q["User query<br/>natural-language question"]
+        ED["Company / ticker match<br/>from the lookup built at index time"]
+        PF["Light query parsing<br/>year and filing-type"]
+        MF["Metadata filter<br/>optional · shrinks the chunk pool"]
+        subgraph legs["Parallel retrieval when both are on"]
+            direction LR
+            L1["BM25 top-K<br/>no cosine gate"]
+            L2["FAISS top-K<br/>cosine floor on candidates"]
+        end
+        RRF["Rank fusion<br/>weighted reciprocal rank (RRF)"]
+        RS["Fused ranking rescored<br/>cosine similarity for citation order"]
+        Q --> ED --> PF --> MF
+        MF --> L1
+        MF --> L2
+        L1 --> RRF
+        L2 --> RRF
+        RRF --> RS
+        D -.->|company lookup| ED
+        D -.->|embeddings| L2
+        D -.->|chunk corpus| L1
+    end
+
+    subgraph answer["Answer"]
+        direction LR
+        P["One assembled prompt<br/>instructions + numbered excerpts + question"]
+        O["Local LLM<br/>Ollama · single generation call"]
+        U["Streamlit app<br/>streamed reply · citations · source panels"]
+        P --> O --> U
+    end
+
+    C -.->|saved index data| D
+    RS --> P
+
+    classDef storage fill:#E8E4DC,stroke:#8A8578,color:#2c2c2a;
+    classDef process fill:#EAF3DE,stroke:#5a7c3a,color:#27500A;
+    classDef embed fill:#EEEDFE,stroke:#6B63B0,color:#3C3489;
+    classDef user fill:#FAEEDA,stroke:#B08A4A,color:#633806;
+
+    class F,D storage;
+    class H,C,ED,PF,MF,L1,L2,RRF,RS,O process;
+    class E,VS,B embed;
+    class Q,P,U user;
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      securityLevel: "strict",
+      flowchart: { htmlLabels: true, curve: "basis" },
+    });
+    mermaid.run({ querySelector: ".mermaid" }).catch(function (err) {
+      console.error(err);
+      document.querySelector(".diagram").innerHTML =
+        "<p style=\"padding:16px;color:#791f1f\">Could not render diagram. Check network (CDN) or open the browser console.</p>";
+    });
+  </script>
+</body>
+</html>

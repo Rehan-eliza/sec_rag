@@ -134,7 +134,7 @@ def build_entity_map(docs: list[Document]) -> dict[str, dict]:
 
 def build_index(docs: list[Document]) -> None:
     """
-    Embed all documents, build FAISS store, and persist all artefacts to disk.
+    Embed all documents, build FAISS store, and persist all artifacts to disk.
 
     Uses SentenceTransformer.encode() directly for bulk embedding so we can
     control batch size and use GPU if available — much faster than calling
@@ -197,7 +197,7 @@ def build_index(docs: list[Document]) -> None:
 
 def load_index() -> tuple[FAISS, list[Document], dict[str, np.ndarray], dict]:
     """
-    Load all persisted artefacts from disk.
+    Load all persisted artifacts from disk.
 
     Returns:
         faiss_store     — LangChain FAISS vectorstore
@@ -211,7 +211,7 @@ def load_index() -> tuple[FAISS, list[Document], dict[str, np.ndarray], dict]:
     ]
     if missing:
         raise FileNotFoundError(
-            f"[indexer] Index artefacts missing: {missing}\n"
+            f"[indexer] Index artifacts missing: {missing}\n"
             "Run  python build_index.py  first."
         )
 

@@ -2,7 +2,7 @@
 build_index.py
 --------------
 One-time script to ingest all filings in data/filings/ and build the
-FAISS + BM25 index artefacts in index/.
+FAISS + BM25 index artifacts in index/.
 
 Run this before launching the app:
     python build_index.py
@@ -10,7 +10,7 @@ Run this before launching the app:
 Options
 -------
     --data-dir PATH   Override the default data/filings/ directory.
-    --force           Rebuild even if index artefacts already exist.
+    --force           Rebuild even if index artifacts already exist.
 """
 
 from __future__ import annotations

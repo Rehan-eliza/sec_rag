@@ -140,7 +140,7 @@ sec-rag/
 ├── requirements.txt
 ├── data/
 │   └── filings/            # Place .txt filing files here
-├── index/                  # Auto-generated index artefacts
+├── index/                  # Auto-generated index artifacts
 ├── logs/                   # inspect_chunks.py output
 ├── prompts/                # Created at runtime (optional notes / prompt history)
 └── src/
