@@ -3,10 +3,10 @@ app.py
 ------
 Streamlit front-end for the SEC RAG system.
 Matches the UI design agreed during architecture review:
-  - Status pills (sources matched, min similarity, 1 LLM call, model)
+  - Status pills (sources matched, min similarity, model)
   - Answer with inline [N] citation badges
   - Per-source cards: similarity bar, metadata pills, verbatim excerpt
-  - Warning state when no chunks pass the 90% threshold
+  - Warning state when retrieval returns no chunks
   - Sidebar: index status, file uploader, rebuild index
 """
 
@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
     DATA_DIR,
+    ENABLE_BM25,
+    ENABLE_SEMANTIC,
     OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
     TOP_K,
@@ -262,12 +264,19 @@ with st.sidebar:
 
     # --- Config info ---
     st.subheader("Config")
-    st.caption(
-        f"**Model:** {OLLAMA_MODEL}  \n"
-        f"**Top-K:** {TOP_K}  \n"
-        f"**Similarity threshold:** {SIMILARITY_THRESHOLD:.0%}  \n"
-        f"**Retrieval:** BM25 + FAISS (RRF)"
-    )
+    _cfg_lines = [
+        f"**Model:** {OLLAMA_MODEL}",
+        f"**Top-K:** {TOP_K}",
+    ]
+    if ENABLE_SEMANTIC:
+        _cfg_lines.append(
+            f"**FAISS (semantic leg):** cosine ≥ {SIMILARITY_THRESHOLD:.0%} before RRF"
+        )
+    if ENABLE_BM25:
+        _cfg_lines.append(f"**BM25:** top-{TOP_K} only (no cosine threshold)")
+    if ENABLE_BM25 and ENABLE_SEMANTIC:
+        _cfg_lines.append("**Fusion:** weighted RRF")
+    st.caption("  \n".join(_cfg_lines))
 
 # ---------------------------------------------------------------------------
 # Load index on app start
@@ -356,7 +365,7 @@ if submitted:
             st.error("No documents in the retrieval pool.")
             st.stop()
 
-        qualified, filters = retrieve(
+        qualified, filters, rrf_counts = retrieve(
             query=query,
             all_docs=all_docs_pool,
             faiss_store=faiss_store,
@@ -375,7 +384,7 @@ if submitted:
             f"""
 <div class="warn-box">
   <strong>No answer — insufficient evidence</strong><br>
-  No filing excerpts met the {SIMILARITY_THRESHOLD:.0%} cosine similarity threshold for your query.<br>
+  No filing excerpts were retrieved for your query.<br>
   <small>Filters applied: {filter_desc}</small><br><br>
   <em>Try broadening your question, or check that the relevant filings are in the corpus.</em>
 </div>
@@ -412,6 +421,7 @@ if submitted:
         "filters":      filters,
         "retrieval_ms": int(retrieval_time * 1000),
         "llm_ms":       int(llm_time * 1000),
+        "rrf_counts":   rrf_counts,
     }
     st.session_state.query_history.insert(0, result)
 
@@ -435,12 +445,19 @@ for result in st.session_state.query_history:
     pills_html = (
         f'<span class="pill pill-green">✓ {n} source{"s" if n != 1 else ""} matched</span>'
         f'<span class="pill pill-teal">Min similarity {min_sim:.0%}</span>'
-        f'<span class="pill pill-gray">1 LLM call</span>'
         f'<span class="pill pill-purple">{OLLAMA_MODEL}</span>'
         f'<span class="pill pill-gray">'
         f'Retrieval {result["retrieval_ms"]}ms · LLM {result["llm_ms"]}ms'
         f"</span>"
     )
+    if result.get("rrf_counts"):
+        rc = result["rrf_counts"]
+        pills_html += (
+            f'<span class="pill pill-gray">'
+            f'RRF · BM25 {rc["bm25"]} · Semantic {rc["semantic"]}'
+            f"</span>"
+        )
+
     if result["filters"]:
         filter_str = " · ".join(
             (", ".join(v) if isinstance(v, list) else str(v))
@@ -517,9 +534,8 @@ for result in st.session_state.query_history:
         f"""
 <div style="background:#f1efe8;border-radius:8px;padding:10px 14px;margin-top:4px">
   <small style="color:#5f5e5a">
-  Only excerpts with ≥{SIMILARITY_THRESHOLD:.0%} cosine similarity are used.
-  If no excerpts meet this threshold the answer is withheld.
-  All quotes are verbatim extracts from SEC filings.
+  The FAISS leg uses cosine ≥ {SIMILARITY_THRESHOLD:.0%} to the query before RRF; BM25 uses top-{TOP_K} only.
+  The bar is cosine vs your question (not an RRF score). All quotes are verbatim extracts from SEC filings.
   </small>
 </div>
 """,

@@ -69,7 +69,8 @@ ENABLE_METADATA_FILTERING = True
 # Retrieval hyperparameters
 # ---------------------------------------------------------------------------
 TOP_K                = 10
-SIMILARITY_THRESHOLD = 0.50
+# Cosine floor for FAISS candidates only (before RRF). BM25 uses top-k only.
+SIMILARITY_THRESHOLD = 0.90
 BM25_WEIGHT          = 0.5
 FAISS_WEIGHT         = 0.5
 

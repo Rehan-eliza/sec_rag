@@ -8,13 +8,12 @@ Full retrieval pipeline, in order:
        - Year / quarter   : regex
        - Filing type      : keyword list
   2. Pre-filter the chunk list by those filters      (if ENABLE_METADATA_FILTERING)
-  3. BM25Retriever over filtered chunks → top 10     (if ENABLE_BM25)
-  4. FAISS retriever with metadata filter → top 10   (if ENABLE_SEMANTIC)
-  5. LangChain EnsembleRetriever (RRF fusion)        (when both legs active)
-     — or single-leg results when only one is enabled
-  6. Score each result with true cosine similarity
-  7. Drop any chunk below SIMILARITY_THRESHOLD
-  8. Return qualified chunks (or empty list → UI shows warning)
+  3. BM25Retriever over filtered chunks → top k       (if ENABLE_BM25)
+  4. FAISS retriever → top k, then drop chunks below SIMILARITY_THRESHOLD
+     on cosine vs query (semantic leg only)         (if ENABLE_SEMANTIC)
+  5. Weighted RRF over the leg lists (when both legs active), else that leg's list
+  6. Score each fused chunk with cosine vs query (for display / prompt order = RRF order)
+  7. Return all fused chunks with a known embedding (empty → UI shows warning)
 
 Feature flags (config.py):
   ENABLE_BM25               — toggle BM25 keyword retrieval leg
@@ -61,6 +60,24 @@ from src.ingest import tokenize  # noqa: E402
 class ScoredChunk(NamedTuple):
     document:   Document
     similarity: float   # cosine similarity ∈ [0, 1]
+
+
+def _filter_semantic_leg(
+    docs: list[Document],
+    query_embedding: np.ndarray,
+    embeddings_map: dict[str, np.ndarray],
+    threshold: float,
+) -> list[Document]:
+    """Keep FAISS candidates whose chunk embedding meets the semantic cosine floor."""
+    out: list[Document] = []
+    for doc in docs:
+        doc_id = doc.metadata.get("doc_id")
+        if not doc_id or doc_id not in embeddings_map:
+            continue
+        doc_emb = embeddings_map[doc_id]
+        if float(np.dot(query_embedding, doc_emb)) >= threshold:
+            out.append(doc)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -186,17 +203,21 @@ def retrieve(
     embeddings_map: dict[str, np.ndarray],
     embedding_model,
     entity_map: dict,
-) -> tuple[list[ScoredChunk], dict]:
+) -> tuple[list[ScoredChunk], dict, dict[str, int] | None]:
     """
     Run the full retrieval pipeline.
 
     Returns
     -------
     qualified : list[ScoredChunk]
-        Chunks that passed the cosine similarity threshold, sorted descending.
+        Fused chunks (RRF order) with cosine scores for the UI. Semantic leg
+        was thresholded before RRF; BM25 leg is top‑k only.
         Empty list → caller should surface the no-answer warning.
     filters   : dict
         The metadata filters that were applied (for display in the UI).
+    rrf_counts : dict[str, int] | None
+        When both legs are on: BM25 top-k size and semantic leg size after the
+        cosine floor (inputs to RRF). Otherwise None.
     """
     if not ENABLE_BM25 and not ENABLE_SEMANTIC:
         raise ValueError("At least one of ENABLE_BM25 or ENABLE_SEMANTIC must be True in config.")
@@ -207,7 +228,7 @@ def retrieve(
     # 2. Pre-filter chunk list
     filtered_docs = filter_docs(all_docs, filters)
     if not filtered_docs:
-        return [], filters
+        return [], filters, None
 
     # 3 & 4. Build active retriever legs
     retrievers = []
@@ -243,14 +264,6 @@ def retrieve(
         retrievers.append(faiss_retriever)
         weights.append(FAISS_WEIGHT)
 
-    # 5. Fuse results
-    if len(retrievers) == 1:
-        fused_docs: list[Document] = retrievers[0].invoke(query)
-    else:
-        ensemble    = EnsembleRetriever(retrievers=retrievers, weights=weights)
-        fused_docs  = ensemble.invoke(query)
-
-    # 6. Compute true cosine similarity
     query_embedding = np.array(
         embedding_model.embed_query(query), dtype=np.float32
     )
@@ -258,6 +271,31 @@ def retrieve(
     if norm > 0:
         query_embedding = query_embedding / norm
 
+    # 5. Fuse: threshold only the semantic (FAISS) leg; BM25 is top‑k only.
+    rrf_counts: dict[str, int] | None = None
+    fused_docs: list[Document]
+    if len(retrievers) == 1:
+        raw = retrievers[0].invoke(query)
+        if ENABLE_SEMANTIC and not ENABLE_BM25:
+            fused_docs = _filter_semantic_leg(
+                raw, query_embedding, embeddings_map, SIMILARITY_THRESHOLD
+            )
+        else:
+            fused_docs = raw
+    else:
+        bm25_docs = retrievers[0].invoke(query)
+        faiss_raw = retrievers[1].invoke(query)
+        faiss_docs = _filter_semantic_leg(
+            faiss_raw, query_embedding, embeddings_map, SIMILARITY_THRESHOLD
+        )
+        ensemble = EnsembleRetriever(retrievers=retrievers, weights=weights)
+        fused_docs = ensemble.weighted_reciprocal_rank([bm25_docs, faiss_docs])
+        rrf_counts = {"bm25": len(bm25_docs), "semantic": len(faiss_docs)}
+
+    if ENABLE_SEMANTIC and not ENABLE_BM25 and not fused_docs:
+        return [], filters, None
+
+    # 6. Cosine score for UI (RRF order preserved)
     scored: list[ScoredChunk] = []
     for doc in fused_docs:
         doc_id = doc.metadata.get("doc_id")
@@ -266,8 +304,4 @@ def retrieve(
             sim     = float(np.dot(query_embedding, doc_emb))
             scored.append(ScoredChunk(document=doc, similarity=sim))
 
-    # 7. Threshold + sort
-    qualified = [s for s in scored if s.similarity >= SIMILARITY_THRESHOLD]
-    qualified.sort(key=lambda s: s.similarity, reverse=True)
-
-    return qualified, filters
+    return scored, filters, rrf_counts
