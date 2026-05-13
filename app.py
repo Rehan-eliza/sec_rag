@@ -327,6 +327,9 @@ with col2:
             st.session_state.query_history = []
             st.rerun()
 
+# Shown only during an Analyze run (after gates pass) so clicks feel responsive
+_analysis_progress_slot = st.empty()
+
 # ---------------------------------------------------------------------------
 # Gate checks
 # ---------------------------------------------------------------------------
@@ -347,38 +350,52 @@ if submitted:
         st.error(f"Model `{OLLAMA_MODEL}` is not available. Run `ollama pull {OLLAMA_MODEL}`.")
         st.stop()
 
+    progress = _analysis_progress_slot.progress(
+        0,
+        text="Retrieving relevant filing excerpts from the corpus…",
+    )
+
     # -----------------------------------------------------------------------
     # Retrieval
     # -----------------------------------------------------------------------
-    with st.spinner("Retrieving relevant filing excerpts…"):
-        t0 = time.time()
+    t0 = time.time()
 
-        all_docs_pool = combined_docs
-        faiss_store   = st.session_state.faiss_store
-        embeddings_map = st.session_state.embeddings_map
-        entity_map    = st.session_state.entity_map
+    all_docs_pool = combined_docs
+    faiss_store   = st.session_state.faiss_store
+    embeddings_map = st.session_state.embeddings_map
+    entity_map    = st.session_state.entity_map
 
-        # Merge extra_docs embeddings if uploaded files were indexed
-        # (uploaded docs go through retriever's BM25 only unless re-indexed;
-        #  they are included in the BM25 path and cosine sim is best-effort)
-        if not all_docs_pool:
-            st.error("No documents in the retrieval pool.")
-            st.stop()
+    # Merge extra_docs embeddings if uploaded files were indexed
+    # (uploaded docs go through retriever's BM25 only unless re-indexed;
+    #  they are included in the BM25 path and cosine sim is best-effort)
+    if not all_docs_pool:
+        _analysis_progress_slot.empty()
+        st.error("No documents in the retrieval pool.")
+        st.stop()
 
-        qualified, filters, rrf_counts = retrieve(
-            query=query,
-            all_docs=all_docs_pool,
-            faiss_store=faiss_store,
-            embeddings_map=embeddings_map,
-            embedding_model=get_embedding_model(),
-            entity_map=entity_map,
-        )
-        retrieval_time = time.time() - t0
+    qualified, filters, rrf_counts = retrieve(
+        query=query,
+        all_docs=all_docs_pool,
+        faiss_store=faiss_store,
+        embeddings_map=embeddings_map,
+        embedding_model=get_embedding_model(),
+        entity_map=entity_map,
+    )
+    retrieval_time = time.time() - t0
+
+    progress.progress(
+        0.35,
+        text=(
+            f"Retrieval done ({retrieval_time:.1f}s) — "
+            f"{len(qualified)} excerpt(s) passed filters; preparing the prompt…"
+        ),
+    )
 
     # -----------------------------------------------------------------------
     # No-results warning
     # -----------------------------------------------------------------------
     if not qualified:
+        _analysis_progress_slot.empty()
         filter_desc = ", ".join(f"{k}={v}" for k, v in filters.items()) if filters else "none"
         st.markdown(
             f"""
@@ -399,6 +416,14 @@ if submitted:
     prompt       = build_prompt(query, qualified)
     citation_map = build_citation_map(qualified)
 
+    progress.progress(
+        0.55,
+        text=(
+            f"Calling `{OLLAMA_MODEL}` — generating the answer "
+            "(first tokens can take a few seconds)…"
+        ),
+    )
+
     # -----------------------------------------------------------------------
     # LLM call (stream tokens so the UI updates as the model generates)
     # -----------------------------------------------------------------------
@@ -406,10 +431,16 @@ if submitted:
     try:
         streamed = st.write_stream(stream_ollama(prompt))
     except RuntimeError as e:
+        _analysis_progress_slot.empty()
         st.error(str(e))
         st.stop()
     llm_time = time.time() - t1
     raw_answer = (streamed or "").strip()
+
+    progress.progress(
+        1.0,
+        text=f"Answer complete ({llm_time:.1f}s) — saving to history…",
+    )
 
     # -----------------------------------------------------------------------
     # Store in history
@@ -424,6 +455,7 @@ if submitted:
         "rrf_counts":   rrf_counts,
     }
     st.session_state.query_history.insert(0, result)
+    _analysis_progress_slot.empty()
     st.rerun()
 
 # ---------------------------------------------------------------------------
